@@ -743,7 +743,7 @@ def act_data_pass(first_data_pass_query, rest_data_pass_query, description):
             ratio_complete = float(get_row(ratio_complete_query)["ratio_complete"])
             verbose("%s range ('%s', '%s'), %s" % (description, ",".join(unique_key_range_start_values), ",".join(unique_key_range_end_values), get_progress_and_eta_presentation(elapsed_times, elapsed_time, ratio_complete)))
         else:
-            verbose("%s range (%s), (%s), progress: N/A" % (description, ",".join(unique_key_range_start_values), ",".join(unique_key_range_end_values)))
+            verbose("%s range (%s), (%s), progress: N/A" % (description, to_string_list(unique_key_range_start_values), to_string_list(unique_key_range_end_values)))
 
         if options.lock_chunks:
             lock_tables_read()
