@@ -43,6 +43,7 @@ def parse_options():
     parser.add_option("--cleanup", dest="cleanup", action="store_true", default=False, help="Remove custom triggers, ghost table from possible previous runs")
     parser.add_option("-v", "--verbose", dest="verbose", action="store_true", default=True, help="Print user friendly messages")
     parser.add_option("-q", "--quiet", dest="verbose", action="store_false", help="Quiet mode, do not verbose")
+    parser.add_option("", "--drop-archive-table", action="store_true", dest="drop_archive_table", default=False, help="Drop the archive table after the table rename.")
     return parser.parse_args()
 
 def verbose(message):
@@ -953,7 +954,9 @@ try:
                 verbose("Ghost table creation completed. Note that triggers on %s.%s were not removed" % (database_name, original_table_name))
             else:
                 rename_tables()
+                if options.drop_archive_table:
                 drop_table(archive_table_name)
+                    verbose("DROP TABLE "+archive_table_name+" completed.")
                 verbose("ALTER TABLE completed")
     except Exception, err:
         print Exception, err
