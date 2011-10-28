@@ -955,7 +955,7 @@ try:
             else:
                 rename_tables()
                 if options.drop_archive_table:
-                drop_table(archive_table_name)
+                    drop_table(archive_table_name)
                     verbose("DROP TABLE "+archive_table_name+" completed.")
                 verbose("ALTER TABLE completed")
     except Exception, err:
