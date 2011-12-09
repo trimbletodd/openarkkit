@@ -44,6 +44,7 @@ def parse_options():
     parser.add_option("-v", "--verbose", dest="verbose", action="store_true", default=True, help="Print user friendly messages")
     parser.add_option("-q", "--quiet", dest="verbose", action="store_false", help="Quiet mode, do not verbose")
     parser.add_option("", "--drop-archive-table", action="store_true", dest="drop_archive_table", default=False, help="Drop the archive table after the table rename.")
+    parser.add_option("", "--ignore-key-columns", dest="ignore_key_columns", help="Comma-separated key columns to ignore.  Note that this will make the chunk sizes inconsistent.")
     return parser.parse_args()
 
 def verbose(message):
@@ -181,8 +182,11 @@ def get_possible_unique_key_column_names_set(read_table_name):
 
     verbose("Possible UNIQUE KEY column names in %s.%s:" % (database_name, read_table_name))
     for possible_unique_key_column_names in possible_unique_key_column_names_set:
-        verbose("- %s" % possible_unique_key_column_names)
-
+        if possible_unique_key_column_names in options.ignore_key_columns.split(","):
+            possible_unique_key_column_names_set.remove(possible_unique_key_column_names)
+            verbose("- IGNORING %s" % possible_unique_key_column_names)
+        else:
+            verbose("- %s" % possible_unique_key_column_names)
     return set(possible_unique_key_column_names_set)
 
 
