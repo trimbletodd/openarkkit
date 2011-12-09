@@ -44,7 +44,7 @@ def parse_options():
     parser.add_option("-v", "--verbose", dest="verbose", action="store_true", default=True, help="Print user friendly messages")
     parser.add_option("-q", "--quiet", dest="verbose", action="store_false", help="Quiet mode, do not verbose")
     parser.add_option("", "--drop-archive-table", action="store_true", dest="drop_archive_table", default=False, help="Drop the archive table after the table rename.")
-    parser.add_option("", "--ignore-key-columns", dest="ignore_key_columns", help="Comma-separated key columns to ignore.  Note that this will make the chunk sizes inconsistent.")
+    parser.add_option("", "--ignore-key-columns", dest="ignore_key_columns", default="", help="Comma-separated key columns to ignore.  Note that this will make the chunk sizes inconsistent.")
     parser.add_option("", "--dry-run", action="store_true", dest="dry_run", default=False, help="Don't actually run the commands, just print them out.")
     return parser.parse_args()
 
@@ -140,7 +140,9 @@ def get_possible_unique_key_columns(read_table_name):
             GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX ASC) AS COLUMN_NAMES,
             SUBSTRING_INDEX(GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX ASC), ',', 1) AS FIRST_COLUMN_NAME
           FROM INFORMATION_SCHEMA.STATISTICS
-          WHERE NON_UNIQUE=0
+          WHERE 
+            NON_UNIQUE=0
+            AND COLUMN_NAME NOT IN ('%s')
           GROUP BY TABLE_SCHEMA, TABLE_NAME, INDEX_NAME
         ) AS UNIQUES
         ON (
@@ -169,7 +171,7 @@ def get_possible_unique_key_columns(read_table_name):
             ELSE 100
           END,
           COUNT_COLUMN_IN_INDEX
-        """ % (database_name, read_table_name)
+        """ % (options.ignore_key_columns.replace(",","\',\'"), database_name, read_table_name)
     rows = get_rows(query)
     return rows
 
@@ -183,11 +185,7 @@ def get_possible_unique_key_column_names_set(read_table_name):
 
     verbose("Possible UNIQUE KEY column names in %s.%s:" % (database_name, read_table_name))
     for possible_unique_key_column_names in possible_unique_key_column_names_set:
-        if possible_unique_key_column_names in options.ignore_key_columns.split(","):
-            possible_unique_key_column_names_set.remove(possible_unique_key_column_names)
-            verbose("- IGNORING %s" % possible_unique_key_column_names)
-        else:
-            verbose("- %s" % possible_unique_key_column_names)
+        verbose("- %s" % possible_unique_key_column_names)
     return set(possible_unique_key_column_names_set)
 
 
@@ -210,7 +208,7 @@ def get_shared_unique_key_columns(shared_unique_key_column_names_set):
             if column_names in shared_unique_key_column_names_set:
                 column_data_type = row["DATA_TYPE"].lower()
                 character_set_name = row["CHARACTER_SET_NAME"]
-                verbose("- %s (%s)" % (column_names, column_data_type))
+                verbose("  - %s (%s)" % (column_names, column_data_type))
                 if unique_key_column_names is None:
                     unique_key_column_names = column_names
                     count_columns_in_unique_key = int(row["COUNT_COLUMN_IN_INDEX"])
