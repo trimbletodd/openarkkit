@@ -45,6 +45,7 @@ def parse_options():
     parser.add_option("-q", "--quiet", dest="verbose", action="store_false", help="Quiet mode, do not verbose")
     parser.add_option("", "--drop-archive-table", action="store_true", dest="drop_archive_table", default=False, help="Drop the archive table after the table rename.")
     parser.add_option("", "--ignore-key-columns", dest="ignore_key_columns", help="Comma-separated key columns to ignore.  Note that this will make the chunk sizes inconsistent.")
+    parser.add_option("", "--dry-run", action="store_true", dest="dry_run", default=False, help="Don't actually run the commands, just print them out.")
     return parser.parse_args()
 
 def verbose(message):
@@ -946,22 +947,25 @@ try:
 
             shared_columns = get_shared_columns()
 
-            create_custom_triggers()
-            lock_tables_write()
-            unique_key_min_values, unique_key_max_values, range_exists = get_unique_key_range()
-            unlock_tables()
-
-            copy_data_pass()
-            delete_data_pass()
-
-            if options.ghost:
-                verbose("Ghost table creation completed. Note that triggers on %s.%s were not removed" % (database_name, original_table_name))
+            if options.dry_run:
+                print "Dry Run: not running actual commands."
             else:
-                rename_tables()
-                if options.drop_archive_table:
-                    drop_table(archive_table_name)
-                    verbose("DROP TABLE "+archive_table_name+" completed.")
-                verbose("ALTER TABLE completed")
+                create_custom_triggers()
+                lock_tables_write()
+                unique_key_min_values, unique_key_max_values, range_exists = get_unique_key_range()
+                unlock_tables()
+
+                copy_data_pass()
+                delete_data_pass()
+
+                if options.ghost:
+                    verbose("Ghost table creation completed. Note that triggers on %s.%s were not removed" % (database_name, original_table_name))
+                else:
+                    rename_tables()
+                    if options.drop_archive_table:
+                        drop_table(archive_table_name)
+                        verbose("DROP TABLE "+archive_table_name+" completed.")
+                        verbose("ALTER TABLE completed")
     except Exception, err:
         print Exception, err
         exit_with_error(err)
