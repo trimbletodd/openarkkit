@@ -130,7 +130,6 @@ def get_possible_unique_key_columns(read_table_name):
           UNIQUES.INDEX_NAME,
           UNIQUES.COLUMN_NAMES,
           UNIQUES.COUNT_COLUMN_IN_INDEX,
-          COLUMNS.DATA_TYPE,
           COLUMNS.CHARACTER_SET_NAME
         FROM INFORMATION_SCHEMA.COLUMNS INNER JOIN (
           SELECT
@@ -164,13 +163,6 @@ def get_possible_unique_key_columns(read_table_name):
               WHEN '' THEN 0
               ELSE 1
           END,
-          CASE DATA_TYPE
-            WHEN 'tinyint' THEN 0
-            WHEN 'smallint' THEN 1
-            WHEN 'int' THEN 2
-            WHEN 'bigint' THEN 3
-            ELSE 100
-          END,
           COUNT_COLUMN_IN_INDEX
         """ % (options.ignore_key_columns.replace(",","\',\'"), database_name, read_table_name)
 
@@ -187,7 +179,18 @@ def get_possible_unique_key_columns(read_table_name):
                   AND COLUMNS.COLUMN_NAME = '%s'
                 """ % (database_name, read_table_name, column)
             type_row = get_row(query)
-            column_data_types_array.append(type_row["DATA_TYPE"])
+
+            if row["CHARACTER_SET_NAME"] is not None:
+                column_data_types_array.append("text")
+            elif type_row["DATA_TYPE"] in ["tinyint", "smallint", "mediumint", "int", "bigint"]:
+                column_data_types_array.append("integer")
+            elif type_row["DATA_TYPE"] in ["time", "date", "timestamp", "datetime"]:
+                column_data_types_array.append("temporal")
+            elif type_row["DATA_TYPE"] in ["enum"]:
+                column_data_types_array.append("enum")
+            else:
+                column_data_types_array.append("other")
+
         row["DATA_TYPES"]=','.join(column_data_types_array)
     verbose("rows: %s\n" % rows)
 
@@ -217,29 +220,23 @@ def get_shared_unique_key_columns(shared_unique_key_column_names_set):
     rows = get_possible_unique_key_columns(original_table_name)
 
     unique_key_column_names = None
-    unique_key_type = None
+    unique_key_types = None
     count_columns_in_unique_key = None
     if rows:
         verbose("- Found following possible unique keys:")
         for row in rows:
             column_names = row["COLUMN_NAMES"].lower()
             if column_names in shared_unique_key_column_names_set:
-                column_data_type = row["DATA_TYPE"].lower()
+                column_data_types = row["DATA_TYPES"].lower()
                 character_set_name = row["CHARACTER_SET_NAME"]
-                verbose("  - %s (%s)" % (column_names, column_data_type))
+                verbose("  - %s (%s)" % (column_names, column_data_types))
                 if unique_key_column_names is None:
                     unique_key_column_names = column_names
                     count_columns_in_unique_key = int(row["COUNT_COLUMN_IN_INDEX"])
-                    if character_set_name is not None:
-                        unique_key_type = "text"
-                    elif column_data_type in ["tinyint", "smallint", "mediumint", "int", "bigint"]:
-                        unique_key_type = "integer"
-                    elif column_data_type in ["time", "date", "timestamp", "datetime"]:
-                        unique_key_type = "temporal"
+                    unique_key_types = row["DATA_TYPES"]
 
-        verbose("Chosen unique key is '%s'" % unique_key_column_names)
-
-    return unique_key_column_names, count_columns_in_unique_key, unique_key_type
+        verbose("Chosen unique key is '%s' (%s)" % (unique_key_column_names, unique_key_types))
+    return unique_key_column_names, count_columns_in_unique_key, unique_key_types
 
 
 def get_table_engine():
@@ -960,6 +957,8 @@ try:
 
             unique_key_column_names, count_columns_in_unique_key, unique_key_type = get_shared_unique_key_columns(shared_unique_key_column_names_set)
             unique_key_column_names_list = unique_key_column_names.split(",")
+
+            verbose("unique_key_type: %s" % unique_key_type)
 
             shared_columns = get_shared_columns()
 
