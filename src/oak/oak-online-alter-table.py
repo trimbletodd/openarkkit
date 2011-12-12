@@ -173,7 +173,24 @@ def get_possible_unique_key_columns(read_table_name):
           END,
           COUNT_COLUMN_IN_INDEX
         """ % (options.ignore_key_columns.replace(",","\',\'"), database_name, read_table_name)
+
+    # Adding DATA_TYPES for multi-column keys
     rows = get_rows(query)
+    for row in rows:
+        column_data_types_array=[]
+        for column in row["COLUMN_NAMES"].split(','):
+            query = """
+                SELECT DATA_TYPE from INFORMATION_SCHEMA.COLUMNS 
+                WHERE
+                  COLUMNS.TABLE_SCHEMA = '%s'
+                  AND COLUMNS.TABLE_NAME = '%s'
+                  AND COLUMNS.COLUMN_NAME = '%s'
+                """ % (database_name, read_table_name, column)
+            type_row = get_row(query)
+            column_data_types_array.append(type_row["DATA_TYPE"])
+        row["DATA_TYPES"]=','.join(column_data_types_array)
+    verbose("rows: %s\n" % rows)
+
     return rows
 
 
