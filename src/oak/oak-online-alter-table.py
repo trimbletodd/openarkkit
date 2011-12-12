@@ -23,6 +23,7 @@ import time
 import re
 import sys
 from optparse import OptionParser
+from time import strftime as date
 
 def parse_options():
     parser = OptionParser()
@@ -50,10 +51,10 @@ def parse_options():
 
 def verbose(message):
     if options.verbose:
-        print "-- %s" % message
+        print "%s: %s" % (date('%Y-%m-%d %H:%M:%S'), message)
 
 def print_error(message):
-    sys.stderr.write("-- ERROR: %s\n" % message)
+    sys.stderr.write("%s: ERROR: %s\n" % (date('%Y-%m-%d %H:%M:%S'), message))
 
 def open_connection():
     verbose("Connecting to MySQL")
@@ -951,6 +952,8 @@ try:
                 create_custom_triggers()
                 lock_tables_write()
                 unique_key_min_values, unique_key_max_values, range_exists = get_unique_key_range()
+                if not range_exists:
+                    verbose("Warning: no range defined.")
                 unlock_tables()
 
                 copy_data_pass()
