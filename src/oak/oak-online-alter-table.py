@@ -617,33 +617,6 @@ def get_multiple_columns_non_equality_comparison(columns, values, comparison_sig
     return "(%s)" % " OR ".join(comparisons)
 
 
-def get_multiple_columns_non_equality_comparison_w_enum_equality(columns, values, comparison_sign, include_equality=False):
-    """
-    Given a list of columns and a list of values (of same length), produce a
-    'less than' or 'greater than' (optionally 'or equal') SQL equasion, by splitting into multiple conditions.
-    An example result may look like:
-    (col1 < val1) OR
-    ((col1 = val1) AND (col2 < val2)) OR
-    ((col1 = val1) AND (col2 = val2) AND (col3 < val3)) OR
-    ((col1 = val1) AND (col2 = val2) AND (col3 = val3)))
-    Which stands for (col1, col2, col3) <= (val1, val2, val3).
-    The latter being simple in representation, however MySQL does not utilize keys
-    properly with this form of condition, hence the splitting into multiple conditions.
-    """
-    comparisons = []
-    for i in range(0,len(columns)):
-        equalities_comparison = get_multiple_columns_equality(columns[0:i], values[0:i])
-        range_comparison = get_value_comparison(columns[i], values[i], comparison_sign)
-        if equalities_comparison:
-            comparison = "(%s AND %s)" % (equalities_comparison, range_comparison)
-        else:
-            comparison = range_comparison
-        comparisons.append(comparison)
-    if include_equality:
-        comparisons.append(get_multiple_columns_equality(columns, values))
-    return "(%s)" % " OR ".join(comparisons)
-
-
 def get_multiple_columns_non_equality_comparison_by_names(delimited_columns_names, delimited_values, comparison_sign, include_equality=False):
     """
     Assumes 'delimited_columns_names' is comma delimited column names, 'delimited_values' is comma delimited values.
@@ -795,8 +768,8 @@ def act_data_pass(first_data_pass_query, rest_data_pass_query, description):
         elif unique_key_types_array[useful_completeness_key_index] == "temporal":
             ratio_complete_query = """
                 SELECT
-                    TIMESTAMPDIFF(SECOND, @unique_key_min_value_0, @unique_key_range_start_0)/
-                    TIMESTAMPDIFF(SECOND, @unique_key_min_value_0, @unique_key_max_value_0)
+                    TIMESTAMPDIFF(SECOND, @unique_key_min_value_%d, @unique_key_range_start_%d)/
+                    TIMESTAMPDIFF(SECOND, @unique_key_min_value_%d, @unique_key_max_value_%d)
                     AS ratio_complete
                 """ % (useful_completeness_key_index,useful_completeness_key_index,useful_completeness_key_index,useful_completeness_key_index)
             ratio_complete = float(get_row(ratio_complete_query)["ratio_complete"])
@@ -915,7 +888,7 @@ def manual_copy_data_pass():
                 verbose("Will sleep for %s seconds" % sleep_seconds)
                 time.sleep(sleep_seconds)
 
-    print "WARNING: The current manual query process does not delete rows from the table."
+    print "WARNING: The current manual query process does deletes rows using the full, possibly multi-column index."
 
 
 def delete_data_pass():
@@ -1067,8 +1040,6 @@ try:
 
             unique_key_column_names, count_columns_in_unique_key, unique_key_types = get_shared_unique_key_columns(shared_unique_key_column_names_set)
             unique_key_column_names_list = unique_key_column_names.split(",")
-
-            verbose("unique_key_types: %s" % unique_key_types)
 
             shared_columns = get_shared_columns()
 
