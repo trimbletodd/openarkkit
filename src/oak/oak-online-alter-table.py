@@ -47,6 +47,7 @@ def parse_options():
     parser.add_option("", "--drop-archive-table", action="store_true", dest="drop_archive_table", default=False, help="Drop the archive table after the table rename.")
     parser.add_option("", "--ignore-key-columns", dest="ignore_key_columns", default="", help="Comma-separated key columns to ignore.  Note that this will make the chunk sizes inconsistent.")
     parser.add_option("", "--dry-run", action="store_true", dest="dry_run", default=False, help="Don't actually run the commands, just print them out.")
+    parser.add_option("", "--manual", action="store_true", dest="manual", default=False, help="Use the hard coded manual data passes.")
     return parser.parse_args()
 
 def verbose(message):
@@ -169,33 +170,35 @@ def get_possible_unique_key_columns(read_table_name):
     # Adding DATA_TYPES for multi-column keys
     rows = get_rows(query)
     for row in rows:
-        column_data_types_array=[]
-        for column in row["COLUMN_NAMES"].split(','):
-            query = """
-                SELECT DATA_TYPE from INFORMATION_SCHEMA.COLUMNS 
+        row["DATA_TYPES"]=get_data_types_for_column_names(row["COLUMN_NAMES"], read_table_name)
+    # verbose("rows: %s" % rows)
+
+    return rows
+
+def get_data_types_for_column_names(columns, read_table_name):
+    column_data_types_array=[]
+    for column in columns.split(','):
+        query = """
+                SELECT DATA_TYPE, CHARACTER_SET_NAME from INFORMATION_SCHEMA.COLUMNS 
                 WHERE
                   COLUMNS.TABLE_SCHEMA = '%s'
                   AND COLUMNS.TABLE_NAME = '%s'
                   AND COLUMNS.COLUMN_NAME = '%s'
                 """ % (database_name, read_table_name, column)
-            type_row = get_row(query)
+        type_row = get_row(query)
 
-            if row["CHARACTER_SET_NAME"] is not None:
-                column_data_types_array.append("text")
-            elif type_row["DATA_TYPE"] in ["tinyint", "smallint", "mediumint", "int", "bigint"]:
-                column_data_types_array.append("integer")
-            elif type_row["DATA_TYPE"] in ["time", "date", "timestamp", "datetime"]:
-                column_data_types_array.append("temporal")
-            elif type_row["DATA_TYPE"] in ["enum"]:
-                column_data_types_array.append("enum")
-            else:
-                column_data_types_array.append("other")
-
-        row["DATA_TYPES"]=','.join(column_data_types_array)
-    verbose("rows: %s\n" % rows)
-
-    return rows
-
+        if type_row["DATA_TYPE"] in ["enum"]:
+            column_data_types_array.append("enum")
+        elif type_row["CHARACTER_SET_NAME"] is not None:
+            column_data_types_array.append("text")
+        elif type_row["DATA_TYPE"] in ["tinyint", "smallint", "mediumint", "int", "bigint"]:
+            column_data_types_array.append("integer")
+        elif type_row["DATA_TYPE"] in ["time", "date", "timestamp", "datetime"]:
+            column_data_types_array.append("temporal")
+        else:
+            column_data_types_array.append("other")
+    return ",".join(column_data_types_array)
+    
 
 def get_possible_unique_key_column_names_set(read_table_name):
     """
@@ -614,6 +617,33 @@ def get_multiple_columns_non_equality_comparison(columns, values, comparison_sig
     return "(%s)" % " OR ".join(comparisons)
 
 
+def get_multiple_columns_non_equality_comparison_w_enum_equality(columns, values, comparison_sign, include_equality=False):
+    """
+    Given a list of columns and a list of values (of same length), produce a
+    'less than' or 'greater than' (optionally 'or equal') SQL equasion, by splitting into multiple conditions.
+    An example result may look like:
+    (col1 < val1) OR
+    ((col1 = val1) AND (col2 < val2)) OR
+    ((col1 = val1) AND (col2 = val2) AND (col3 < val3)) OR
+    ((col1 = val1) AND (col2 = val2) AND (col3 = val3)))
+    Which stands for (col1, col2, col3) <= (val1, val2, val3).
+    The latter being simple in representation, however MySQL does not utilize keys
+    properly with this form of condition, hence the splitting into multiple conditions.
+    """
+    comparisons = []
+    for i in range(0,len(columns)):
+        equalities_comparison = get_multiple_columns_equality(columns[0:i], values[0:i])
+        range_comparison = get_value_comparison(columns[i], values[i], comparison_sign)
+        if equalities_comparison:
+            comparison = "(%s AND %s)" % (equalities_comparison, range_comparison)
+        else:
+            comparison = range_comparison
+        comparisons.append(comparison)
+    if include_equality:
+        comparisons.append(get_multiple_columns_equality(columns, values))
+    return "(%s)" % " OR ".join(comparisons)
+
+
 def get_multiple_columns_non_equality_comparison_by_names(delimited_columns_names, delimited_values, comparison_sign, include_equality=False):
     """
     Assumes 'delimited_columns_names' is comma delimited column names, 'delimited_values' is comma delimited values.
@@ -742,34 +772,45 @@ def act_data_pass(first_data_pass_query, rest_data_pass_query, description):
 
         unique_key_range_start_values = [get_session_variable_value("unique_key_range_start_%d" % i) for i in range(0,count_columns_in_unique_key)]
         unique_key_range_end_values = [get_session_variable_value("unique_key_range_end_%d" % i) for i in range(0,count_columns_in_unique_key)]
+        unique_key_types_array = unique_key_types.split(",")
 
-        if unique_key_type == "integer":
+        useful_completeness_key_index = 0
+        for i in range(0,len(unique_key_types_array)):
+            if not unique_key_types_array[i] in ["enum","other"]:
+                useful_completeness_key_index = i;
+                break;
+
+        verbose("unique_key_types: %s " % unique_key_types)
+        verbose("useful_completeness_key_index: %s " % useful_completeness_key_index)
+
+
+        if unique_key_types_array[useful_completeness_key_index] == "integer":
             ratio_complete_query = """
                 SELECT
-                    (@unique_key_range_start_0-@unique_key_min_value_0)/
-                    (@unique_key_max_value_0-@unique_key_min_value_0)
+                    (@unique_key_range_start_%d-@unique_key_min_value_%d)/
+                    (@unique_key_max_value_%d-@unique_key_min_value_%d)
                     AS ratio_complete
-                """
+                """ % (useful_completeness_key_index,useful_completeness_key_index,useful_completeness_key_index,useful_completeness_key_index)
             ratio_complete = float(get_row(ratio_complete_query)["ratio_complete"])
             verbose("%s range (%s), (%s), %s" % (description, ",".join(to_string_list(unique_key_range_start_values)), ",".join(to_string_list(unique_key_range_end_values)), get_progress_and_eta_presentation(elapsed_times, elapsed_time, ratio_complete)))
-        elif unique_key_type == "temporal":
+        elif unique_key_types_array[useful_completeness_key_index] == "temporal":
             ratio_complete_query = """
                 SELECT
                     TIMESTAMPDIFF(SECOND, @unique_key_min_value_0, @unique_key_range_start_0)/
                     TIMESTAMPDIFF(SECOND, @unique_key_min_value_0, @unique_key_max_value_0)
                     AS ratio_complete
-                """
+                """ % (useful_completeness_key_index,useful_completeness_key_index,useful_completeness_key_index,useful_completeness_key_index)
             ratio_complete = float(get_row(ratio_complete_query)["ratio_complete"])
             verbose("%s range ('%s', '%s'), %s" % (description, ",".join(unique_key_range_start_values), ",".join(unique_key_range_end_values), get_progress_and_eta_presentation(elapsed_times, elapsed_time, ratio_complete)))
         else:
             verbose("%s range (%s), (%s), progress: N/A" % (description, to_string_list(unique_key_range_start_values), to_string_list(unique_key_range_end_values)))
 
-        if options.lock_chunks:
-            lock_tables_read()
-        num_affected_rows = act_query(execute_data_pass_query)
-        total_num_affected_rows += num_affected_rows
-        if options.lock_chunks:
-            unlock_tables()
+        # if options.lock_chunks:
+        #     lock_tables_read()
+        # num_affected_rows = act_query(execute_data_pass_query)
+        # total_num_affected_rows += num_affected_rows
+        # if options.lock_chunks:
+        #     unlock_tables()
 
         set_unique_key_next_range_start()
 
@@ -808,7 +849,74 @@ def copy_data_pass():
     first_data_pass_query = data_pass_queries[0]
     rest_data_pass_query = data_pass_queries[1]
 
+    verbose("first_data_pass_query: %s" % data_pass_queries[0])
+    verbose("rest_data_pass_query: %s" %  data_pass_queries[1])
+
     act_data_pass(first_data_pass_query, rest_data_pass_query, "Copying")
+
+def get_enum_values_for_column(column):
+    
+    query = """
+    SELECT DATA_TYPE, COLUMN_TYPE from INFORMATION_SCHEMA.COLUMNS WHERE
+    COLUMNS.TABLE_SCHEMA = '%s'
+    AND COLUMNS.TABLE_NAME = '%s'
+    AND COLUMNS.COLUMN_NAME = '%s'
+    """ % (database_name, ghost_table_name, column)
+    row = get_row(query)
+    if row['DATA_TYPE'] == 'enum':
+        return row['COLUMN_TYPE'].lstrip('enum').strip('()\'').split("','")
+    return None
+
+def manual_copy_data_pass():
+    shared_columns_listing = ", ".join(shared_columns)
+
+    engine_flags = ""
+    if table_engine == "innodb":
+        engine_flags = "LOCK IN SHARE MODE"
+
+    ## TSM: Future functionality, currently hard-coded below
+    # column_data_types = get_data_types_for_column_names(columns)
+    # if "enum" in column_data_types:
+    #     enum_index = column_data_types.index("enum")
+    # enum_col = columns.pop(enum_index)
+    # enum_col_values = get_enum_column_values(enum_col)
+    
+    id_column = 'page_object_id'
+    enum_column = 'page_object_type'
+    enum_list = get_enum_values_for_column(enum_column)
+
+    max_id = get_row("SELECT max(%s) as MAX_ID from %s.%s" % (id_column, database_name, original_table_name))['MAX_ID']
+    chunk_size = options.chunk_size
+    num_chunks = max_id / chunk_size + 1
+    verbose("Processing query in %i batches of %i, up to %i" % (num_chunks, chunk_size, max_id))
+
+    for enum in enum_list:
+        for i in range(0,num_chunks):
+            manual_where_statement = "%s = '%s' AND %s >= %i AND %s < %i" % (enum_column, enum, id_column, i*chunk_size, id_column, (i+1)*chunk_size)
+
+            copy_data_pass_query = """
+                   INSERT IGNORE INTO %s.%s (%s)
+                   (SELECT %s FROM %s.%s 
+                   WHERE (%s) %s)
+                   """ % (database_name, ghost_table_name, shared_columns_listing,
+                          shared_columns_listing, database_name, original_table_name, 
+                          manual_where_statement, engine_flags)
+
+            # verbose("copy_data_pass_query: %s" %  copy_data_pass_query)
+            verbose("insert progress: %s: %i/%i (%i%%)" % (enum, i, num_chunks, 100*i/num_chunks))
+
+            if options.lock_chunks:
+                lock_tables_read()
+            num_affected_rows = act_query(copy_data_pass_query)
+            if options.lock_chunks:
+                unlock_tables()
+
+            if options.sleep_millis > 0:
+                sleep_seconds = options.sleep_millis/1000.0
+                verbose("Will sleep for %s seconds" % sleep_seconds)
+                time.sleep(sleep_seconds)
+
+    print "WARNING: The current manual query process does not delete rows from the table."
 
 
 def delete_data_pass():
@@ -836,6 +944,9 @@ def delete_data_pass():
             ) for first_round in [True, False]]
     first_data_pass_query = data_pass_queries[0]
     rest_data_pass_query = data_pass_queries[1]
+
+    verbose("first_data_pass_query: %s" % data_pass_queries[0])
+    verbose("rest_data_pass_query: %s" %  data_pass_queries[1])
 
     act_data_pass(first_data_pass_query, rest_data_pass_query, "Deleting")
 
@@ -955,10 +1066,10 @@ try:
             if not shared_unique_key_column_names_set:
                 exit_with_error("Altered table must retain at least one unique key")
 
-            unique_key_column_names, count_columns_in_unique_key, unique_key_type = get_shared_unique_key_columns(shared_unique_key_column_names_set)
+            unique_key_column_names, count_columns_in_unique_key, unique_key_types = get_shared_unique_key_columns(shared_unique_key_column_names_set)
             unique_key_column_names_list = unique_key_column_names.split(",")
 
-            verbose("unique_key_type: %s" % unique_key_type)
+            verbose("unique_key_types: %s" % unique_key_types)
 
             shared_columns = get_shared_columns()
 
@@ -971,14 +1082,17 @@ try:
                 if not range_exists:
                     verbose("Warning: no range defined.")
                 unlock_tables()
-
-                copy_data_pass()
-                delete_data_pass()
+                if options.manual:
+                    manual_copy_data_pass()
+                    delete_data_pass()
+                else:
+                    copy_data_pass()
+                    delete_data_pass()
 
                 if options.ghost:
                     verbose("Ghost table creation completed. Note that triggers on %s.%s were not removed" % (database_name, original_table_name))
                 else:
-                    rename_tables()
+                    # rename_tables()
                     if options.drop_archive_table:
                         drop_table(archive_table_name)
                         verbose("DROP TABLE "+archive_table_name+" completed.")
