@@ -780,9 +780,8 @@ def act_data_pass(first_data_pass_query, rest_data_pass_query, description):
                 useful_completeness_key_index = i;
                 break;
 
-        verbose("unique_key_types: %s " % unique_key_types)
-        verbose("useful_completeness_key_index: %s " % useful_completeness_key_index)
-
+        # Todo: that code above doesn't work with the code below yet.
+        useful_completeness_key_index = 0
 
         if unique_key_types_array[useful_completeness_key_index] == "integer":
             ratio_complete_query = """
@@ -805,12 +804,12 @@ def act_data_pass(first_data_pass_query, rest_data_pass_query, description):
         else:
             verbose("%s range (%s), (%s), progress: N/A" % (description, to_string_list(unique_key_range_start_values), to_string_list(unique_key_range_end_values)))
 
-        # if options.lock_chunks:
-        #     lock_tables_read()
-        # num_affected_rows = act_query(execute_data_pass_query)
-        # total_num_affected_rows += num_affected_rows
-        # if options.lock_chunks:
-        #     unlock_tables()
+        if options.lock_chunks:
+            lock_tables_read()
+        num_affected_rows = act_query(execute_data_pass_query)
+        total_num_affected_rows += num_affected_rows
+        if options.lock_chunks:
+            unlock_tables()
 
         set_unique_key_next_range_start()
 
@@ -849,8 +848,8 @@ def copy_data_pass():
     first_data_pass_query = data_pass_queries[0]
     rest_data_pass_query = data_pass_queries[1]
 
-    verbose("first_data_pass_query: %s" % data_pass_queries[0])
-    verbose("rest_data_pass_query: %s" %  data_pass_queries[1])
+    # verbose("first_data_pass_query: %s" % data_pass_queries[0])
+    # verbose("rest_data_pass_query: %s" %  data_pass_queries[1])
 
     act_data_pass(first_data_pass_query, rest_data_pass_query, "Copying")
 
@@ -945,8 +944,8 @@ def delete_data_pass():
     first_data_pass_query = data_pass_queries[0]
     rest_data_pass_query = data_pass_queries[1]
 
-    verbose("first_data_pass_query: %s" % data_pass_queries[0])
-    verbose("rest_data_pass_query: %s" %  data_pass_queries[1])
+    # verbose("first_data_pass_query: %s" % data_pass_queries[0])
+    # verbose("rest_data_pass_query: %s" %  data_pass_queries[1])
 
     act_data_pass(first_data_pass_query, rest_data_pass_query, "Deleting")
 
@@ -1092,7 +1091,7 @@ try:
                 if options.ghost:
                     verbose("Ghost table creation completed. Note that triggers on %s.%s were not removed" % (database_name, original_table_name))
                 else:
-                    # rename_tables()
+                    rename_tables()
                     if options.drop_archive_table:
                         drop_table(archive_table_name)
                         verbose("DROP TABLE "+archive_table_name+" completed.")
