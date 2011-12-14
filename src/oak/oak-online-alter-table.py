@@ -707,11 +707,11 @@ def get_eta_presentation(eta_seconds, data_valid):
 
 def get_progress_and_eta_presentation(elapsed_times, elapsed_time, ratio_complete):
     elapsed_times.append((elapsed_time, ratio_complete,))
-    elapsed_times = elapsed_times[-5:]
+    elapsed_times = elapsed_times[-500:]
     progress = int(100.0 * ratio_complete)
-    #eta_seconds = get_eta_seconds(elapsed_times, ratio_complete)
-    #return "progress: %d%%, ETA: %s" % (progress, get_eta_presentation(eta_seconds, len(elapsed_times) >= 5))
-    return "progress: %d%%" % progress
+    eta_seconds = get_eta_seconds(elapsed_times, ratio_complete)
+    return "progress: %d%%, ETA: %s" % (progress, get_eta_presentation(eta_seconds, len(elapsed_times) >= 5))
+    # return "progress: %d%%" % progress
 
 
 def to_string_list(list):
@@ -862,8 +862,14 @@ def manual_copy_data_pass():
     num_chunks = max_id / chunk_size + 1
     verbose("Processing query in %i batches of %i, up to %i" % (num_chunks, chunk_size, max_id))
 
+    start_time = time.time()
+    elapsed_times = []
+    j=-1
     for enum in enum_list:
+        j+=1 
         for i in range(0,num_chunks):
+            elapsed_time = time.time() - start_time
+
             manual_where_statement = "%s = '%s' AND %s >= %i AND %s < %i" % (enum_column, enum, id_column, i*chunk_size, id_column, (i+1)*chunk_size)
 
             copy_data_pass_query = """
@@ -875,7 +881,14 @@ def manual_copy_data_pass():
                           manual_where_statement, engine_flags)
 
             # verbose("copy_data_pass_query: %s" %  copy_data_pass_query)
-            verbose("insert progress: %s: %i/%i (%i%%)" % (enum, i, num_chunks, 100*i/num_chunks))
+            
+            ratio_complete = float(i+(j*num_chunks))/num_chunks/len(enum_list)
+            elapsed_times.append((elapsed_time, ratio_complete,))
+            elapsed_times = elapsed_times[-500:]
+
+            eta_seconds = get_eta_seconds(elapsed_times, ratio_complete)
+            verbose("insert progress: %s: %i/%i (%i%%) ETA: %s" % (enum, i, num_chunks, 100*i/num_chunks, get_eta_presentation(eta_seconds, len(elapsed_times) >= 5)))
+
 
             if options.lock_chunks:
                 lock_tables_read()
@@ -885,7 +898,7 @@ def manual_copy_data_pass():
 
             if options.sleep_millis > 0:
                 sleep_seconds = options.sleep_millis/1000.0
-                verbose("Will sleep for %s seconds" % sleep_seconds)
+                # verbose("Will sleep for %s seconds" % sleep_seconds)
                 time.sleep(sleep_seconds)
 
     print "WARNING: The current manual query process does deletes rows using the full, possibly multi-column index."
