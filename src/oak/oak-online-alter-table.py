@@ -36,7 +36,7 @@ def parse_options():
     parser.add_option("", "--defaults-file", dest="defaults_file", default="", help="Read from MySQL configuration file. Overrides all other options")
     parser.add_option("-d", "--database", dest="database", help="Database name (required unless table is fully qualified)")
     parser.add_option("-t", "--table", dest="table", help="Table to alter (optionally fully qualified)")
-    parser.add_option("-g", "--ghost", dest="ghost", help="Table name to serve as ghost. This table will be created and synchronized with the original table")
+    parser.add_option("-g", "--ghost", dest="ghost", help="Table name to serve as ghost. This table will be created and synchronized with the original table.  If this option is included, the RENAME TABLE will not occur and the triggers will not be dropped.  The final step must be done manually.")
     parser.add_option("-a", "--alter", dest="alter_statement", help="Comma delimited ALTER statement details, excluding the 'ALTER TABLE t' itself")
     parser.add_option("-c", "--chunk-size", dest="chunk_size", type="int", default=1000, help="Number of rows to act on in chunks. Default: 1000")
     parser.add_option("-l", "--lock-chunks", action="store_true", dest="lock_chunks", default=False, help="Use LOCK TABLES for each chunk")
@@ -1007,10 +1007,6 @@ try:
 
         ghost_table_name = None
         if options.ghost:
-            if table_exists(options.ghost):
-                exit_with_error("Ghost table: %s.%s already exists." % (database_name, options.ghost))
-
-        if options.ghost:
             ghost_table_name = options.ghost
         else:
             ghost_table_name = "__oak_"+original_table_name
@@ -1024,6 +1020,10 @@ try:
             # All we do now is clean up
             cleanup()
         else:
+            if options.ghost:
+                if table_exists(options.ghost):
+                    exit_with_error("Ghost table: %s.%s already exists." % (database_name, options.ghost))
+
             table_engine = get_table_engine()
             if not table_engine:
                 exit_with_error("Table %s.%s does not exist" % (database_name, original_table_name))
